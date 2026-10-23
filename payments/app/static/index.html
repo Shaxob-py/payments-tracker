@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Учёт оплат</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1c1e21; --muted:#6b7280; --accent:#2563eb; --bad:#dc2626; --line:#e5e7eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111317; --card:#1b1e24; --text:#e8eaed; --muted:#9aa0a6; --line:#2a2e36; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.4 system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:640px; margin:0 auto; padding:12px; }
+  h1 { font-size:20px; margin:8px 0 12px; }
+  h2 { font-size:16px; margin:0 0 10px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:8px 0 4px; }
+  input, select, button { width:100%; font:inherit; padding:12px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); }
+  button { background:var(--accent); color:#fff; border:0; margin-top:12px; cursor:pointer; font-weight:600; }
+  button.small { width:auto; margin:0; padding:8px 12px; font-size:14px; }
+  .row { display:flex; gap:8px; align-items:center; justify-content:space-between; }
+  .debtor { padding:10px 0; border-top:1px solid var(--line); }
+  .debtor:first-of-type { border-top:0; }
+  .name { font-weight:600; }
+  .meta { color:var(--muted); font-size:13px; }
+  .debt { color:var(--bad); font-weight:700; white-space:nowrap; }
+  .msg { margin-top:8px; font-size:14px; min-height:1.2em; }
+  .ok { color:#16a34a; } .err { color:var(--bad); }
+  details summary { cursor:pointer; font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Учёт оплат</h1>
+
+  <section>
+    <div class="row"><h2>Должники</h2><div style="width:55%"><input type="month" id="month"></div></div>
+    <div id="debtors"></div>
+    <div class="msg" id="debtors-msg"></div>
+  </section>
+
+  <section>
+    <h2>Внести оплату</h2>
+    <form id="pay-form">
+      <label for="student">Ученик</label>
+      <select id="student" required></select>
+      <label for="amount">Сумма</label>
+      <input id="amount" type="number" inputmode="numeric" min="1" step="1" required>
+      <label for="paid_at">Дата</label>
+      <input id="paid_at" type="date" required>
+      <button type="submit">Сохранить оплату</button>
+      <div class="msg" id="pay-msg"></div>
+    </form>
+  </section>
+
+  <section>
+    <details>
+      <summary>Добавить ученика</summary>
+      <form id="student-form">
+        <label for="s-name">Имя</label><input id="s-name" required maxlength="200">
+        <label for="s-phone">Телефон</label><input id="s-phone" type="tel" required maxlength="32">
+        <label for="s-group">Группа</label><input id="s-group" required maxlength="100">
+        <label for="s-fee">Месячная сумма</label><input id="s-fee" type="number" inputmode="numeric" min="0" step="1" required>
+        <button type="submit">Добавить</button>
+        <div class="msg" id="student-msg"></div>
+      </form>
+    </details>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => new Intl.NumberFormat('ru-RU').format(n);
+const today = new Date();
+const pad = n => String(n).padStart(2, '0');
+const isoDate = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+
+$('month').value = `${today.getFullYear()}-${pad(today.getMonth()+1)}`;
+$('paid_at').value = isoDate(today);
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let detail = r.statusText;
+    try {
+      const j = await r.json();
+      detail = typeof j.detail === 'string' ? j.detail : j.detail.map(e => `${e.loc.slice(1).join('.')}: ${e.msg}`).join('; ');
+    } catch {}
+    throw new Error(detail);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+function say(id, text, ok) { const el = $(id); el.textContent = text; el.className = 'msg ' + (ok ? 'ok' : 'err'); }
+
+async function loadStudents() {
+  const students = await api('/students');
+  const sel = $('student');
+  const prev = sel.value;
+  sel.replaceChildren(...students.map(s => {
+    const o = document.createElement('option');
+    o.value = s.id; o.textContent = `${s.name} (${s.group})`;
+    return o;
+  }));
+  if (prev) sel.value = prev;
+}
+
+async function loadDebtors() {
+  const box = $('debtors');
+  try {
+    const list = await api('/debtors?month=' + encodeURIComponent($('month').value));
+    box.replaceChildren();
+    $('debtors-msg').textContent = list.length ? '' : 'Должников нет 🎉';
+    for (const d of list) {
+      const row = document.createElement('div'); row.className = 'debtor row';
+      const left = document.createElement('div');
+      const n = document.createElement('div'); n.className = 'name'; n.textContent = d.name;
+      const m = document.createElement('div'); m.className = 'meta';
+      m.textContent = `${d.group} · ${d.phone} · оплачено ${fmt(d.paid)} из ${fmt(d.monthly_fee)}`;
+      left.append(n, m);
+      const right = document.createElement('div'); right.style.textAlign = 'right';
+      const debt = document.createElement('div'); debt.className = 'debt'; debt.textContent = fmt(d.debt);
+      const btn = document.createElement('button'); btn.className = 'small'; btn.textContent = 'Оплата';
+      btn.style.marginTop = '6px';
+      btn.onclick = () => {
+        $('student').value = d.student_id; $('amount').value = d.debt;
+        $('pay-form').scrollIntoView({behavior: 'smooth'}); $('amount').focus();
+      };
+      right.append(debt, btn);
+      row.append(left, right); box.append(row);
+    }
+  } catch (e) { box.replaceChildren(); say('debtors-msg', e.message, false); }
+}
+
+$('month').addEventListener('change', loadDebtors);
+
+$('pay-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  try {
+    await api('/payments', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({student_id: +$('student').value, amount: +$('amount').value, paid_at: $('paid_at').value}),
+    });
+    say('pay-msg', 'Оплата сохранена', true);
+    $('amount').value = '';
+    loadDebtors();
+  } catch (err) { say('pay-msg', err.message, false); }
+});
+
+$('student-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  try {
+    await api('/students', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: $('s-name').value, phone: $('s-phone').value, group: $('s-group').value, monthly_fee: +$('s-fee').value}),
+    });
+    say('student-msg', 'Ученик добавлен', true);
+    e.target.reset();
+    await loadStudents(); loadDebtors();
+  } catch (err) { say('student-msg', err.message, false); }
+});
+
+loadStudents().then(loadDebtors).catch(err => say('debtors-msg', err.message, false));
+</script>
+</body>
+</html>
